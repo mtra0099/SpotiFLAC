@@ -83,6 +83,7 @@ func parseArgs() config {
 	return cfg
 }
 
+func printUsage() {
 	fmt.Println(`SpotiFLAC CLI — Download Spotify tracks as lossless FLAC
 
 USAGE:
