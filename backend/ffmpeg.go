@@ -528,6 +528,20 @@ func ConvertAudio(req ConvertAudioRequest) ([]ConvertAudioResult, error) {
 		return nil, fmt.Errorf("ffmpeg is not installed")
 	}
 
+	outputFormat := strings.ToLower(strings.TrimSpace(req.OutputFormat))
+	mp3Bitrate := req.Bitrate
+	if mp3Bitrate == "" {
+		mp3Bitrate = "320k"
+	}
+
+	mp3Encoder := ""
+	if outputFormat == "mp3" {
+		mp3Encoder, err = getSupportedMP3Encoder(ffmpegPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	results := make([]ConvertAudioResult, len(req.InputFiles))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -545,7 +559,7 @@ func ConvertAudio(req ConvertAudioRequest) ([]ConvertAudioResult, error) {
 			baseName := strings.TrimSuffix(filepath.Base(inputFile), inputExt)
 			inputDir := filepath.Dir(inputFile)
 
-			outputFormatUpper := strings.ToUpper(req.OutputFormat)
+			outputFormatUpper := strings.ToUpper(outputFormat)
 			outputDir := filepath.Join(inputDir, outputFormatUpper)
 
 			if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -557,7 +571,7 @@ func ConvertAudio(req ConvertAudioRequest) ([]ConvertAudioResult, error) {
 				return
 			}
 
-			outputExt := "." + strings.ToLower(req.OutputFormat)
+			outputExt := "." + outputFormat
 			outputFile := filepath.Join(outputDir, baseName+outputExt)
 
 			if inputExt == outputExt {
@@ -597,11 +611,11 @@ func ConvertAudio(req ConvertAudioRequest) ([]ConvertAudioResult, error) {
 				"-y",
 			}
 
-			switch req.OutputFormat {
+			switch outputFormat {
 			case "mp3":
 				args = append(args,
-					"-codec:a", "libmp3lame",
-					"-b:a", req.Bitrate,
+					"-codec:a", mp3Encoder,
+					"-b:a", mp3Bitrate,
 					"-map", "0:a",
 					"-id3v2_version", "3",
 				)
@@ -678,6 +692,32 @@ func ConvertAudio(req ConvertAudioRequest) ([]ConvertAudioResult, error) {
 
 	wg.Wait()
 	return results, nil
+}
+
+func getSupportedMP3Encoder(ffmpegPath string) (string, error) {
+	cmd := exec.Command(ffmpegPath, "-hide_banner", "-encoders")
+	setHideWindow(cmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect ffmpeg encoders: %w", err)
+	}
+
+	available := make(map[string]bool)
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		available[fields[1]] = true
+	}
+
+	for _, encoder := range []string{"libmp3lame", "libshine", "mp3", "mp3_mf"} {
+		if available[encoder] {
+			return encoder, nil
+		}
+	}
+
+	return "", fmt.Errorf("ffmpeg does not support MP3 encoding on this system")
 }
 
 type AudioFileInfo struct {

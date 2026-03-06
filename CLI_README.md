@@ -1,6 +1,6 @@
 # SpotiFLAC CLI
 
-A command-line interface for downloading Spotify tracks as lossless FLAC files using Tidal, Qobuz, Amazon Music, and Deezer as audio sources — **no account required**.
+A command-line interface for downloading Spotify tracks as lossless audio files using Tidal, Qobuz, Amazon Music, and Deezer as audio sources — **no account required**.
 
 This CLI wraps the SpotiFLAC backend package, allowing headless/server/programmatic use without the GUI.
 
@@ -11,14 +11,14 @@ This CLI wraps the SpotiFLAC backend package, allowing headless/server/programma
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌──────────┐
 │ Spotify URL  │────▶│ Metadata Fetcher  │────▶│ Service Resolver │────▶│ Download │
-│ (track/album │     │ (reverse-eng API) │     │ (Tidal/Qobuz/    │     │ as FLAC  │
+│ (track/album │     │ (reverse-eng API) │     │ (Tidal/Qobuz/    │     │ FLAC/MP3 │
 │  /playlist)  │     │                   │     │  Amazon/Deezer)  │     │          │
 └──────────────┘     └──────────────────┘     └──────────────────┘     └──────────┘
 ```
 
 1. **Metadata fetch** — Uses Spotify's internal web API (reverse-engineered, no auth needed) to get track/album/playlist metadata: name, artist, album, cover art, ISRC, etc.
 2. **Service resolution** — Maps the Spotify track to its equivalent on a lossless service (Tidal, Qobuz, Amazon, or Deezer) using song.link and MusicBrainz APIs.
-3. **Download** — Downloads the lossless audio stream from the matched service, embeds metadata (artist, album, cover art, track number, copyright), and saves as FLAC.
+3. **Download** — Downloads the lossless audio stream from the matched service, embeds metadata (artist, album, cover art, track number, copyright), and saves as FLAC or converts to MP3.
 
 ---
 
@@ -49,7 +49,9 @@ spotiflac-cli <spotify-url> [OPTIONS]
 |------|-------|-------------|---------|
 | `--service <name>` | `-s` | Download service | `tidal` |
 | `--output <dir>` | `-o` | Output directory | `./downloads` |
-| `--format <fmt>` | `-f` | Audio quality | `LOSSLESS` |
+| `--format <fmt>` | `-f` | Source quality | `LOSSLESS` |
+| `--output-format <fmt>` | — | Final file format | `flac` |
+| `--bitrate <rate>` | `-b` | MP3 bitrate when using `--output-format mp3` | `320k` |
 | `--metadata-only` | `-m` | Fetch metadata without downloading | off |
 | `--json` | `-j` | Output structured JSON to stdout | off |
 | `--help` | `-h` | Show help | — |
@@ -70,6 +72,22 @@ spotiflac-cli <spotify-url> [OPTIONS]
 | `LOSSLESS` | CD quality (16-bit/44.1kHz) — default |
 | `HI_RES` | High resolution (24-bit, where available) |
 | `HI_RES_LOSSLESS` | Maximum quality available |
+
+### Output Format Values
+
+| Value | Description |
+|-------|-------------|
+| `flac` | Keep the downloaded lossless file as FLAC (default) |
+| `mp3` | Convert the downloaded file to MP3 after tagging |
+
+### MP3 Conversion Notes
+
+- `--format` controls the source quality that gets downloaded first.
+- `--output-format mp3` converts that downloaded source into MP3.
+- `--bitrate` sets the MP3 bitrate, for example `192k` or `320k`.
+- If a matching `.flac` already exists and the `.mp3` does not, the CLI reuses that FLAC and converts it instead of downloading again.
+- If the target `.mp3` already exists, the CLI skips the track.
+- MP3 conversion requires FFmpeg to be available, and the CLI will use any supported MP3 encoder exposed by that FFmpeg build.
 
 ### Supported URLs
 
@@ -96,7 +114,8 @@ Output:
 URL:     https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT
 Service: tidal
 Output:  ./downloads
-Format:  LOSSLESS
+Quality: LOSSLESS
+Format:  FLAC
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📡 Fetching Spotify metadata...
@@ -113,6 +132,33 @@ Format:  LOSSLESS
 
 ```bash
 ./spotiflac-cli "https://open.spotify.com/track/7qiZfU4dY1lWllzX7mPBI3" -s qobuz -o ~/music
+```
+
+### Download as MP3
+
+```bash
+./spotiflac-cli "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT" --output-format mp3 -b 320k
+```
+
+Output:
+
+```text
+🎵 SpotiFLAC CLI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL:     https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT
+Service: tidal
+Output:  ./downloads
+Quality: LOSSLESS
+Format:  MP3
+Bitrate: 320k
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📡 Fetching Spotify metadata...
+✅ Track: Never Gonna Give You Up
+
+⬇️  Downloading via TIDAL...
+🎚️  Converting to MP3...
+✅ Saved: Never Gonna Give You Up - Rick Astley.mp3
 ```
 
 ### Download an entire album
@@ -176,6 +222,8 @@ When using `--json`, all output is structured JSON on stdout. Logs/progress go t
   ]
 }
 ```
+
+When `--output-format mp3` is used, `file_path` will point to the generated `.mp3` file instead.
 
 ### Error response
 

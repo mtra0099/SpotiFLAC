@@ -37,16 +37,20 @@ type config struct {
 	spotifyURL   string
 	service      string
 	outputDir    string
-	audioFormat  string
+	audioQuality string
+	outputFormat string
+	mp3Bitrate   string
 	metadataOnly bool
 	jsonOutput   bool
 }
 
 func parseArgs() config {
 	cfg := config{
-		service:     "tidal",
-		outputDir:   "./downloads",
-		audioFormat: "LOSSLESS",
+		service:      "tidal",
+		outputDir:    "./downloads",
+		audioQuality: "LOSSLESS",
+		outputFormat: "flac",
+		mp3Bitrate:   "320k",
 	}
 
 	if len(os.Args) < 2 || os.Args[1] == "--help" || os.Args[1] == "-h" {
@@ -70,7 +74,17 @@ func parseArgs() config {
 			}
 		case "--format", "-f":
 			if i+1 < len(os.Args) {
-				cfg.audioFormat = os.Args[i+1]
+				cfg.audioQuality = os.Args[i+1]
+				i++
+			}
+		case "--output-format":
+			if i+1 < len(os.Args) {
+				cfg.outputFormat = strings.ToLower(os.Args[i+1])
+				i++
+			}
+		case "--bitrate", "-b":
+			if i+1 < len(os.Args) {
+				cfg.mp3Bitrate = os.Args[i+1]
 				i++
 			}
 		case "--metadata-only", "-m":
@@ -84,7 +98,7 @@ func parseArgs() config {
 }
 
 func printUsage() {
-	fmt.Println(`SpotiFLAC CLI — Download Spotify tracks as lossless FLAC
+	fmt.Println(`SpotiFLAC CLI — Download Spotify tracks as FLAC or MP3
 
 USAGE:
   spotiflac-cli <spotify-url> [OPTIONS]
@@ -92,7 +106,9 @@ USAGE:
 OPTIONS:
   -s, --service <name>     Download service: tidal (default), qobuz, amazon, deezer
   -o, --output <dir>       Output directory (default: ./downloads)
-  -f, --format <fmt>       Audio format: LOSSLESS (default), HI_RES, HI_RES_LOSSLESS
+  -f, --format <fmt>       Source quality: LOSSLESS (default), HI_RES, HI_RES_LOSSLESS
+      --output-format <f>  Final file format: flac (default), mp3
+  -b, --bitrate <rate>     MP3 bitrate when using --output-format mp3 (default: 320k)
   -m, --metadata-only      Fetch and display metadata without downloading
   -j, --json               Output structured JSON (for programmatic use)
   -h, --help               Show this help
@@ -109,6 +125,9 @@ EXAMPLES:
   # Download via Qobuz to a custom directory
   spotiflac-cli https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -s qobuz -o ~/music
 
+  # Download and convert to MP3
+  spotiflac-cli https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT --output-format mp3
+
   # Get track metadata as JSON (no download)
   spotiflac-cli https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT -m -j
 
@@ -124,13 +143,21 @@ EXIT CODES:
 func main() {
 	cfg := parseArgs()
 
+	if !isSupportedOutputFormat(cfg.outputFormat) {
+		exitError(cfg, fmt.Sprintf("Unsupported output format: %s", cfg.outputFormat))
+	}
+
 	if !cfg.jsonOutput {
 		fmt.Printf("🎵 SpotiFLAC CLI\n")
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 		fmt.Printf("URL:     %s\n", cfg.spotifyURL)
 		fmt.Printf("Service: %s\n", cfg.service)
 		fmt.Printf("Output:  %s\n", cfg.outputDir)
-		fmt.Printf("Format:  %s\n", cfg.audioFormat)
+		fmt.Printf("Quality: %s\n", cfg.audioQuality)
+		fmt.Printf("Format:  %s\n", strings.ToUpper(cfg.outputFormat))
+		if cfg.outputFormat == "mp3" {
+			fmt.Printf("Bitrate: %s\n", cfg.mp3Bitrate)
+		}
 		if cfg.metadataOnly {
 			fmt.Printf("Mode:    metadata-only\n")
 		}
@@ -375,12 +402,25 @@ func downloadAndReport(cfg config, t trackMetadata) TrackResult {
 		Album:     t.AlbumName,
 	}
 
+	if cfg.outputFormat != "flac" {
+		expectedOutput := expectedOutputPath(cfg, t)
+		if info, err := os.Stat(expectedOutput); err == nil && info.Size() > 0 {
+			tr.Status = "exists"
+			tr.FilePath = expectedOutput
+			tr.SizeBytes = info.Size()
+			if !cfg.jsonOutput {
+				fmt.Printf("⏭️  Already exists: %s\n", filepath.Base(expectedOutput))
+			}
+			return tr
+		}
+	}
+
 	if !cfg.jsonOutput {
 		fmt.Printf("⬇️  Downloading via %s...\n", strings.ToUpper(cfg.service))
 	}
 
 	filename, err := downloadTrack(cfg.service, t.SpotifyID, t.Name, t.Artists, t.AlbumName,
-		t.AlbumArtist, t.ReleaseDate, t.CoverURL, cfg.outputDir, cfg.audioFormat,
+		t.AlbumArtist, t.ReleaseDate, t.CoverURL, cfg.outputDir, cfg.audioQuality,
 		t.TrackNumber, t.DiscNumber, t.TotalTracks, t.TotalDiscs, t.Copyright, t.Publisher)
 
 	if err != nil {
@@ -398,8 +438,32 @@ func downloadAndReport(cfg config, t trackMetadata) TrackResult {
 		return tr
 	}
 
+	sourceAlreadyExisted := strings.HasPrefix(filename, "EXISTS:")
 	if strings.HasPrefix(filename, "EXISTS:") {
 		filename = strings.TrimPrefix(filename, "EXISTS:")
+	}
+
+	if cfg.outputFormat != "flac" {
+		if !cfg.jsonOutput {
+			fmt.Printf("🎚️  Converting to %s...\n", strings.ToUpper(cfg.outputFormat))
+		}
+
+		convertedFilename, err := convertDownloadedFile(cfg, filename, sourceAlreadyExisted)
+		if err != nil {
+			tr.Status = "failed"
+			tr.Error = err.Error()
+			if !cfg.jsonOutput {
+				fmt.Printf("❌ Conversion failed: %v\n", err)
+			}
+			return tr
+		}
+
+		filename = convertedFilename
+		tr.Status = "downloaded"
+		if !cfg.jsonOutput {
+			fmt.Printf("✅ Saved: %s\n", filepath.Base(filename))
+		}
+	} else if sourceAlreadyExisted {
 		tr.Status = "exists"
 		if !cfg.jsonOutput {
 			fmt.Printf("⏭️  Already exists: %s\n", filepath.Base(filename))
@@ -467,6 +531,70 @@ func downloadTrack(service, spotifyID, trackName, artistName, albumName, albumAr
 	default:
 		return "", fmt.Errorf("unknown service: %s", service)
 	}
+}
+
+func isSupportedOutputFormat(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "flac", "mp3":
+		return true
+	default:
+		return false
+	}
+}
+
+func expectedOutputPath(cfg config, t trackMetadata) string {
+	baseName := strings.TrimSuffix(
+		backend.BuildExpectedFilename(t.Name, t.Artists, t.AlbumName, t.AlbumArtist, t.ReleaseDate, "title-artist", "", "", false, 0, t.DiscNumber, false),
+		".flac",
+	)
+	return filepath.Join(cfg.outputDir, baseName+"."+cfg.outputFormat)
+}
+
+func convertDownloadedFile(cfg config, sourcePath string, keepSource bool) (string, error) {
+	targetPath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath)) + "." + cfg.outputFormat
+
+	results, err := backend.ConvertAudio(backend.ConvertAudioRequest{
+		InputFiles:   []string{sourcePath},
+		OutputFormat: cfg.outputFormat,
+		Bitrate:      cfg.mp3Bitrate,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to convert %s: %w", filepath.Base(sourcePath), err)
+	}
+	if len(results) != 1 {
+		return "", fmt.Errorf("unexpected conversion result count: %d", len(results))
+	}
+	if !results[0].Success {
+		return "", fmt.Errorf("failed to convert %s: %s", filepath.Base(sourcePath), results[0].Error)
+	}
+
+	convertedPath := results[0].OutputFile
+	if convertedPath == "" {
+		return "", fmt.Errorf("conversion did not produce an output file")
+	}
+
+	if convertedPath != targetPath {
+		if err := os.Rename(convertedPath, targetPath); err != nil {
+			return "", fmt.Errorf("failed to move converted file to %s: %w", targetPath, err)
+		}
+		cleanupIfEmpty(filepath.Dir(convertedPath))
+	}
+
+	if !keepSource {
+		if err := os.Remove(sourcePath); err != nil {
+			return "", fmt.Errorf("converted to %s but failed to remove source file %s: %w", targetPath, sourcePath, err)
+		}
+	}
+
+	return targetPath, nil
+}
+
+func cleanupIfEmpty(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) > 0 {
+		return
+	}
+	_ = os.Remove(dir)
 }
 
 // ── Output helpers ──────────────────────────────────────────────────

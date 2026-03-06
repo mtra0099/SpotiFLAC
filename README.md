@@ -12,6 +12,14 @@ Get Spotify tracks in true FLAC from Tidal, Qobuz, Amazon Music & Deezer — no 
 
 ### [Download](https://github.com/afkarxyz/SpotiFLAC/releases)
 
+## CLI
+
+The repository also includes a standalone CLI documented in `CLI_README.md`.
+
+- Build: `go build -o spotiflac-cli.exe ./cmd/cli/`
+- Output formats: `flac` and `mp3`
+- Example: `./spotiflac-cli.exe "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT" --output-format mp3 -b 320k`
+
 ## Screenshot
 
 ![Image](https://github.com/user-attachments/assets/adbdc056-bace-44a9-8ba6-898b4526b65a)
