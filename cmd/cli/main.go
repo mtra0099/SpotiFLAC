@@ -46,7 +46,7 @@ type config struct {
 
 func parseArgs() config {
 	cfg := config{
-		service:      "tidal",
+		service:      "auto",
 		outputDir:    "./downloads",
 		audioQuality: "LOSSLESS",
 		outputFormat: "flac",
@@ -104,7 +104,7 @@ USAGE:
   spotiflac-cli <spotify-url> [OPTIONS]
 
 OPTIONS:
-  -s, --service <name>     Download service: tidal (default), qobuz, amazon, deezer
+  -s, --service <name>     Download service: auto (default), tidal, qobuz, amazon
   -o, --output <dir>       Output directory (default: ./downloads)
   -f, --format <fmt>       Source quality: LOSSLESS (default), HI_RES, HI_RES_LOSSLESS
       --output-format <f>  Final file format: flac (default), mp3
@@ -178,7 +178,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	data, err := backend.GetFilteredSpotifyData(ctx, cfg.spotifyURL, false, 0)
+	data, err := backend.GetFilteredSpotifyData(ctx, cfg.spotifyURL, false, 0, "", nil)
 	if err != nil {
 		exitError(cfg, fmt.Sprintf("Failed to fetch metadata: %v", err))
 	}
@@ -415,33 +415,53 @@ func downloadAndReport(cfg config, t trackMetadata) TrackResult {
 		}
 	}
 
-	if !cfg.jsonOutput {
-		fmt.Printf("⬇️  Downloading via %s...\n", strings.ToUpper(cfg.service))
+	servicesToTry := []string{cfg.service}
+	if cfg.service == "auto" {
+		servicesToTry = []string{"tidal", "amazon", "qobuz"}
 	}
 
-	filename, err := downloadTrack(cfg.service, t.SpotifyID, t.Name, t.Artists, t.AlbumName,
-		t.AlbumArtist, t.ReleaseDate, t.CoverURL, cfg.outputDir, cfg.audioQuality,
-		t.TrackNumber, t.DiscNumber, t.TotalTracks, t.TotalDiscs, t.Copyright, t.Publisher)
+	var filename string
+	var err error
+	var fallbackErrors []string
 
-	if err != nil {
-		tr.Status = "failed"
-		tr.Error = err.Error()
+	for _, srv := range servicesToTry {
 		if !cfg.jsonOutput {
-			fmt.Printf("❌ Download failed: %v\n", err)
+			fmt.Printf("⬇️  Downloading via %s...\n", strings.ToUpper(srv))
 		}
-		// Clean up partial file
+
+		filename, err = downloadTrack(srv, t.SpotifyID, t.Name, t.Artists, t.AlbumName,
+			t.AlbumArtist, t.ReleaseDate, t.CoverURL, cfg.outputDir, cfg.audioQuality,
+			t.TrackNumber, t.DiscNumber, t.TotalTracks, t.TotalDiscs, t.Copyright, t.Publisher)
+
+		if err == nil {
+			break
+		}
+
+		if !cfg.jsonOutput {
+			fmt.Printf("⚠️  %s failed: %v\n", strings.ToUpper(srv), err)
+		}
+		fallbackErrors = append(fallbackErrors, fmt.Sprintf("[%s] %v", srv, err))
+
+		// Clean up partial file on failure
 		if filename != "" && !strings.HasPrefix(filename, "EXISTS:") {
 			if _, statErr := os.Stat(filename); statErr == nil {
 				os.Remove(filename)
 			}
 		}
+	}
+
+	if err != nil {
+		tr.Status = "failed"
+		tr.Error = strings.Join(fallbackErrors, " | ")
+		if !cfg.jsonOutput {
+			fmt.Printf("❌ Download failed on all attempted services.\n")
+		}
 		return tr
 	}
 
 	sourceAlreadyExisted := strings.HasPrefix(filename, "EXISTS:")
-	if strings.HasPrefix(filename, "EXISTS:") {
-		filename = strings.TrimPrefix(filename, "EXISTS:")
-	}
+	filename = strings.TrimPrefix(filename, "EXISTS:")
+
 
 	if cfg.outputFormat != "flac" {
 		if !cfg.jsonOutput {
@@ -520,13 +540,6 @@ func downloadTrack(service, spotifyID, trackName, artistName, albumName, albumAr
 			false, coverURL, false,
 			trackNumber, discNumber, totalTracks, totalDiscs,
 			copyright, publisher, spotifyURL, true, false, false, false)
-
-	case "deezer":
-		downloader := backend.NewDeezerDownloader()
-		return downloader.Download(spotifyID, outputDir, filenameFormat,
-			"", "", false, 0, trackName, artistName, albumName, albumArtist, releaseDate,
-			coverURL, trackNumber, discNumber, totalTracks, false, totalDiscs,
-			copyright, publisher, spotifyURL, false, false, false)
 
 	default:
 		return "", fmt.Errorf("unknown service: %s", service)

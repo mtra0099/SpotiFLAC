@@ -713,6 +713,7 @@ func ConvertAudio(req ConvertAudioRequest) ([]ConvertAudioResult, error) {
 				args = append(args,
 					"-codec:a", mp3Encoder,
 					"-b:a", mp3Bitrate,
+					"-ar", "44100",  // Add sample rate constraint for MP3 encoders
 					"-map", "0:a",
 					"-id3v2_version", "3",
 				)
