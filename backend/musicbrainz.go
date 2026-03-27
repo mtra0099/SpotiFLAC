@@ -77,7 +77,7 @@ func FetchMusicBrainzMetadata(isrc, title, artist, album string, useSingleGenre 
 		return meta, err
 	}
 
-	req.Header.Set("User-Agent", fmt.Sprintf("SpotiFLAC/%s ( support@exyezed.cc )", AppVersion))
+	req.Header.Set("User-Agent", fmt.Sprintf("SpotiFLAC/%s ( hi@afkarxyz.qzz.io )", AppVersion))
 
 	var resp *http.Response
 	var lastErr error
@@ -146,7 +146,7 @@ func FetchMusicBrainzMetadata(isrc, title, artist, album string, useSingleGenre 
 			if len(genres) > 5 {
 				genres = genres[:5]
 			}
-			meta.Genre = strings.Join(genres, "; ")
+			meta.Genre = strings.Join(genres, GetSeparator())
 		}
 	}
 
